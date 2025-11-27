@@ -330,7 +330,7 @@ with tab3:
             s_solvent = st.radio("Solvent Type", ["NMP", "Water"])
             st.divider()
             s_temp = st.slider("Drying Temp (°C)", 60, 200, 110)
-            s_time = st.slider("Drying Time (min)", 10, 120, 60) 
+            s_time = st.slider("Drying Time (min)", 10, 720, 60) 
             s_loading = st.number_input("Loading mass (mg/cm²)", 5.0, 30.0, 10.0)
             
             st.write("")
