@@ -3,10 +3,10 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import base64
+import os
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
-import os
 
 # --- [1] 페이지 기본 설정 ---
 st.set_page_config(page_title="Battery AI Simulator", layout="wide", page_icon="🔋")
@@ -30,12 +30,12 @@ def get_img_tag(file, title):
     except:
         return ""
 
-# [핵심 수정] HTML 태그를 미리 생성 (f-string 오류 방지)
+# 로고 태그 생성
 tag_ajou_sw = get_img_tag("ajou_sw_logo.png", "Ajou SW")
 tag_ajou    = get_img_tag("ajou_logo.png", "Ajou University")
 tag_google  = get_img_tag("google_logo.png", "Google")
 
-# HTML/CSS
+# HTML/CSS 스타일링
 header_html = f"""
 <style>
 html, body, [class*="css"] {{
@@ -73,7 +73,7 @@ html, body, [class*="css"] {{
     margin-top: 5px;
 }}
 .logo-img {{
-    height: 30px; /* 로고 크기 축소 (30px) */
+    height: 30px;
     width: auto;
     object-fit: contain;
     transition: transform 0.3s;
@@ -112,26 +112,71 @@ st.info("""이 플랫폼은 Engine 1(수명 예측)과 Engine 2(환경 영향 �
 # [데이터 로드 함수 모음]
 # ==============================================================================
 
-# 1. Engine 2 모델 로드
+# 1. Engine 2 모델 로드 (업데이트된 로직 적용)
 @st.cache_resource
 def load_engine2_model():
     try:
+        # 실제 엑셀 파일 로드 시도
         db = pd.read_excel('engine2_database.xlsx', sheet_name='LCA_Data', engine='openpyxl')
     except:
-        # Fallback dummy data generation
+        # ------------------------------------------------------------------
+        # [핵심] 파일이 없을 때 생성되는 '스마트' 더미 데이터
+        # ------------------------------------------------------------------
+        n = 300
+        
+        # (1) 입력 변수 생성
+        binder_types = np.random.choice(['PVDF', 'CMGG', 'GG', 'CMC'], n)
+        solvent_types = []
+        
+        # PVDF는 주로 NMP와 짝을 이룸
+        for b in binder_types:
+            if b == 'PVDF': 
+                solvent_types.append('NMP')
+            else: 
+                solvent_types.append(np.random.choice(['Water', 'Water', 'NMP']))
+
+        temp = np.random.uniform(60, 180, n)       # 온도
+        time = np.random.uniform(10, 120, n)       # 시간
+        loading = np.random.uniform(5, 20, n)      # 로딩양
+        
+        # (2) 출력 변수 생성 (공학적 상관관계 적용)
+        energy_list = []
+        co2_list = []
+        voc_list = []
+        
+        for i in range(n):
+            # 기본 에너지 = 온도, 시간, 로딩양에 비례하도록 설정
+            base_energy = (temp[i] * 0.004) + (time[i] * 0.002) + (loading[i] * 0.005)
+            
+            if solvent_types[i] == 'NMP':
+                # NMP는 회수 장치 부하로 에너지/CO2/VOC 높음
+                e_val = base_energy + 0.4 
+                c_val = e_val * 0.4 + 0.1 
+                v_val = 3.0 + np.random.normal(0, 0.2)
+            else: # Water
+                # Water는 친환경
+                e_val = base_energy 
+                c_val = e_val * 0.2 + 0.05
+                v_val = 0.0
+            
+            energy_list.append(e_val)
+            co2_list.append(c_val)
+            voc_list.append(v_val)
+
+        # 데이터프레임 생성
         data = {
-            'Binder_Type': ['PVDF']*50 + ['CMGG']*50 + ['GG']*50,
-            'Solvent_Type': ['NMP']*50 + ['Water']*50 + ['Water']*50,
-            'Binder_Amount_wt': np.random.uniform(1, 5, 150),
-            'Graphite_wt': np.random.uniform(90, 98, 150),
-            'SuperP_wt': np.random.uniform(0.5, 2, 150),
-            'Coating_Thickness_mm': np.random.uniform(0.05, 0.2, 150),
-            'Drying_Temp_C': np.random.uniform(80, 150, 150),
-            'Drying_Time_min': np.random.uniform(10, 60, 150),
-            'Areal_Mass_Loading_g_m2': np.random.uniform(5, 15, 150),
-            'CO2_kg_per_m2': np.concatenate([np.random.uniform(0.2, 0.3, 50), np.random.uniform(0.05, 0.1, 100)]),
-            'Energy_kWh_per_m2': np.concatenate([np.random.uniform(0.5, 0.7, 50), np.random.uniform(0.1, 0.2, 100)]),
-            'VOC_g_per_m2': np.concatenate([np.random.uniform(2.8, 3.2, 50), np.zeros(100)])
+            'Binder_Type': binder_types,
+            'Solvent_Type': solvent_types,
+            'Binder_Amount_wt': np.random.uniform(1, 5, n),
+            'Graphite_wt': np.random.uniform(90, 98, n),
+            'SuperP_wt': np.random.uniform(0.5, 2, n),
+            'Coating_Thickness_mm': np.random.uniform(0.05, 0.2, n),
+            'Drying_Temp_C': temp,
+            'Drying_Time_min': time,
+            'Areal_Mass_Loading_g_m2': loading,
+            'CO2_kg_per_m2': co2_list,
+            'Energy_kWh_per_m2': energy_list,
+            'VOC_g_per_m2': voc_list
         }
         db = pd.DataFrame(data)
 
@@ -299,7 +344,6 @@ with tab2:
                     key="t2_radio"
                 )
                 st.write("")
-                # 메타데이터 표시
                 if "Sample A" in selected_sample:
                     st.success("✅ **Sample A**\n\n- 상태: 안정적 (Stable)\n- Binder: CMGG\n- 예측 정확도: 높음")
                 elif "Sample B" in selected_sample:
@@ -316,16 +360,13 @@ with tab2:
                 plt.style.use('default')
                 fig, ax = plt.subplots(figsize=(10, 6))
 
-                # 1. 학습 데이터 (History)
                 ax.plot(history['Cycle'], history['Capacity'], 'o-', color='black', markersize=4, alpha=0.7, label='Input History (Cycle 1~100)')
 
-                # 2. 연결선
                 if not history.empty and not prediction.empty:
                     connect_x = [history['Cycle'].iloc[-1], prediction['Cycle'].iloc[0]]
                     connect_y = [history['Capacity'].iloc[-1], prediction['Capacity'].iloc[0]]
                     ax.plot(connect_x, connect_y, '--', color='#dc3545', linewidth=2)
 
-                # 3. 예측 데이터 (Prediction)
                 ax.plot(prediction['Cycle'], prediction['Capacity'], '--', color='#dc3545', linewidth=2, label='AI Prediction (Cycle 101~)')
 
                 ax.set_xlabel("Cycle Number", fontsize=12, fontweight='bold')
