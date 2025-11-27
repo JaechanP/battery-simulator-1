@@ -4,6 +4,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import base64
 import os
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
 
 # --- [1] 페이지 기본 설정 ---
 st.set_page_config(page_title="Battery AI Simulator", layout="wide", page_icon="🔋")
@@ -13,7 +16,10 @@ st.set_page_config(page_title="Battery AI Simulator", layout="wide", page_icon="
 # ==============================================================================
 
 def get_img_tag(file, title):
-    """이미지 태그 생성 (오류 방지)"""
+    """
+    이미지 파일을 읽어서 완벽한 HTML <img> 태그를 반환하는 함수
+    (파일이 없거나 에러 발생 시 빈 문자열 반환하여 화면 깨짐 방지)
+    """
     if not os.path.exists(file):
         return ""
     try:
@@ -24,10 +30,12 @@ def get_img_tag(file, title):
     except:
         return ""
 
+# 로고 태그 생성
 tag_ajou_sw = get_img_tag("ajou_sw_logo.png", "Ajou SW")
 tag_ajou    = get_img_tag("ajou_logo.png", "Ajou University")
 tag_google  = get_img_tag("google_logo.png", "Google")
 
+# HTML/CSS 스타일링
 header_html = f"""
 <style>
 html, body, [class*="css"] {{
@@ -74,7 +82,9 @@ html, body, [class*="css"] {{
     transform: scale(1.1);
 }}
 .separator {{
-    width: 1px; height: 20px; background-color: #bbb;
+    width: 1px; 
+    height: 20px; 
+    background-color: #bbb;
 }}
 @media (max-width: 900px) {{
     .main-title {{ font-size: 1.8rem; white-space: normal; }}
@@ -93,7 +103,9 @@ html, body, [class*="css"] {{
     </div>
 </div>
 """
+
 st.markdown(header_html, unsafe_allow_html=True)
+
 st.info("""이 플랫폼은 Engine 1(수명 예측)과 Engine 2(환경 영향 평가)를 통합한 시뮬레이터입니다. 아래 탭을 선택하여 기능을 사용해보세요.""")
 
 # ==============================================================================
@@ -111,9 +123,11 @@ def load_real_case_data():
 
 def predict_life_and_ce(decay_rate, specific_cap_base=185.0, cycles=1000):
     x = np.arange(1, cycles + 1)
+    
     linear_fade = 0.00015 * x * decay_rate
     acc_fade = 1e-9 * np.exp(0.015 * x) * decay_rate
     cap_noise = np.random.normal(0, 0.0015, size=len(x))
+    
     retention = 1.0 - linear_fade - acc_fade + cap_noise
     capacity = retention * specific_cap_base
     
@@ -123,8 +137,10 @@ def predict_life_and_ce(decay_rate, specific_cap_base=185.0, cycles=1000):
         base_ce = 99.85; ce_noise_scale = 0.05
     else:
         base_ce = 99.6 - (x * 0.0008); ce_noise_scale = 0.15
+        
     ce_noise = np.random.normal(0, ce_noise_scale, size=len(x))
     ce = np.clip(base_ce + ce_noise, 0, 100.0)
+
     return x, np.clip(capacity, 0, None), ce
 
 # ==============================================================================
@@ -186,7 +202,8 @@ def calculate_lca_impact(binder_type, solvent_type, drying_temp, loading_mass, d
     # 끓는점보다 낮게 건조하면 건조 효율이 떨어져 시간이 더 걸리거나 에너지가 더 듬 (페널티)
     efficiency = 1.0 if drying_temp >= boiling_point else 0.6
     
-    energy_val = (delta_T * drying_time * process_penalty) / (efficiency * 10000.0)
+    # [수정됨] 에너지 계산 계수 조정: 10000.0 -> 50000.0 (값을 줄임)
+    energy_val = (delta_T * drying_time * process_penalty) / (efficiency * 50000.0)
     
     return co2_val, energy_val, voc_val, co2_desc, voc_desc
 
@@ -245,13 +262,16 @@ with tab1:
                 ax_cap.set_ylabel("Capacity (mAh/g)", fontsize=11, fontweight='bold')
                 ax_cap.set_title("Discharge Capacity Prediction", fontsize=14, fontweight='bold')
                 ax_cap.legend(); ax_cap.grid(True, linestyle='--', alpha=0.4)
+                ax_cap.spines['top'].set_visible(False); ax_cap.spines['right'].set_visible(False)
                 
                 ax_ce.plot(cycles, ce, '-', color='#007bff', linewidth=1.5, alpha=0.8, label='Coulombic Efficiency')
                 ax_ce.set_ylabel("CE (%)", fontsize=11, fontweight='bold')
                 ax_ce.set_xlabel("Cycle Number", fontsize=11, fontweight='bold')
                 ax_ce.set_ylim(98.0, 100.5)
                 ax_ce.legend(); ax_ce.grid(True, linestyle='--', alpha=0.4)
+                ax_ce.spines['top'].set_visible(False); ax_ce.spines['right'].set_visible(False)
                 
+                plt.tight_layout()
                 st.pyplot(fig2)
                 
                 eol_limit = init_cap_input * 0.8
@@ -325,7 +345,8 @@ with tab3:
     with col_input_e2:
         with st.container(border=True):
             st.markdown("#### 🛠️ 공정 조건 설정")
-            s_binder = st.selectbox("Binder Type", ["PVDF", "CMGG", "GG", "CMC", "SBR"])
+            # [수정됨] SBR 제거
+            s_binder = st.selectbox("Binder Type", ["PVDF", "CMGG", "GG", "CMC"])
             s_solvent = st.radio("Solvent Type", ["NMP", "Water"])
             st.divider()
             s_temp = st.slider("Drying Temp (°C)", 60, 200, 110)
@@ -337,77 +358,87 @@ with tab3:
 
     with col_view_e2:
         if run_e2:
-            # [핵심] 머신러닝 대신 과학적 수식 함수 호출
-            co2, energy, voc, co2_desc, voc_desc = calculate_lca_impact(
-                s_binder, s_solvent, s_temp, s_loading, s_time
-            )
-            
-            # 결과 카드 표시
-            col1, col2, col3 = st.columns(3)
-            col1.metric("CO₂ Emission", f"{co2:.4f} kg/m²", delta=co2_desc, delta_color="inverse")
-            col2.metric("Energy Consumption", f"{energy:.4f} kWh/m²", help="Based on Solvent BP & Drying Temp")
-            col3.metric("VOC Emission", f"{voc:.4f} g/m²", delta=voc_desc, delta_color="inverse")
-            
-            st.divider()
-            
-            # 상세 분석 텍스트 (교수님 피드백 근거 제시용)
-            st.markdown("#### 📋 Scientific Basis for Calculation")
-            
-            with st.expander("1. VOC (휘발성 유기화합물) 산출 근거", expanded=True):
-                if s_solvent == "NMP":
-                    st.write("🔴 **High Risk:** 용매로 **NMP(N-Methyl-2-pyrrolidone)**가 사용되었습니다. NMP는 생식 독성이 있는 유기용매로, 건조 과정에서 VOC가 다량 발생하며 엄격한 배기 장치가 필요합니다.")
-                else:
-                    st.write("🟢 **Safe:** 용매로 **Water(물)**이 사용되었습니다. 건조 시 수증기만 배출되므로 VOC 발생량은 **0**에 수렴합니다.")
+            # [수정됨] PVDF + Water 부적절한 조합 시 실행 차단 및 경고 표시
+            if s_binder == "PVDF" and s_solvent == "Water":
+                st.error("🚫 **Error: 부적절한 소재 조합입니다 (Invalid Combination)**")
+                st.markdown("""
+                **과학적 근거 (Scientific Basis):**
+                * **PVDF**는 소수성(Hydrophobic) 고분자로 물에 용해되지 않습니다.
+                * 따라서 **Water(물)** 용매와는 슬러리(Slurry) 형성이 불가능합니다.
+                * PVDF를 사용하려면 반드시 **NMP**와 같은 유기 용매를 선택해야 합니다.
+                """)
+            else:
+                # [핵심] 머신러닝 대신 과학적 수식 함수 호출 (정상 실행)
+                co2, energy, voc, co2_desc, voc_desc = calculate_lca_impact(
+                    s_binder, s_solvent, s_temp, s_loading, s_time
+                )
+                
+                # 결과 카드 표시
+                col1, col2, col3 = st.columns(3)
+                col1.metric("CO₂ Emission", f"{co2:.4f} kg/m²", delta=co2_desc, delta_color="inverse")
+                col2.metric("Energy Consumption", f"{energy:.4f} kWh/m²", help="Based on Solvent BP & Drying Temp")
+                col3.metric("VOC Emission", f"{voc:.4f} g/m²", delta=voc_desc, delta_color="inverse")
+                
+                st.divider()
+                
+                # 상세 분석 텍스트 (교수님 피드백 근거 제시용)
+                st.markdown("#### 📋 Scientific Basis for Calculation")
+                
+                with st.expander("1. VOC (휘발성 유기화합물) 산출 근거", expanded=True):
+                    if s_solvent == "NMP":
+                        st.write("🔴 **High Risk:** 용매로 **NMP(N-Methyl-2-pyrrolidone)**가 사용되었습니다. NMP는 생식 독성이 있는 유기용매로, 건조 과정에서 VOC가 다량 발생하며 엄격한 배기 장치가 필요합니다.")
+                    else:
+                        st.write("🟢 **Safe:** 용매로 **Water(물)**이 사용되었습니다. 건조 시 수증기만 배출되므로 VOC 발생량은 **0**에 수렴합니다.")
 
-            with st.expander("2. CO₂ (탄소 배출량) 산출 근거", expanded=True):
-                if "PVDF" in s_binder:
-                    st.write("🔴 **High Emission:** 바인더로 **PVDF**가 사용되었습니다.")
-                    st.latex(r"-(C_2H_2F_2)_n-")
-                    st.write("화학 구조 내 **불소(F)** 원소로 인해 합성 및 폐기 과정에서 GWP(지구온난화지수)가 매우 높습니다.")
-                else:
-                    st.write(f"🟢 **Low Emission:** 바인더로 **{s_binder}**가 사용되었습니다. 이는 **천연 유래 고분자(Bio-based)**로, C, H, O 기반의 구조를 가지며 불소를 포함하지 않아 탄소 배출이 적습니다.")
+                with st.expander("2. CO₂ (탄소 배출량) 산출 근거", expanded=True):
+                    if "PVDF" in s_binder:
+                        st.write("🔴 **High Emission:** 바인더로 **PVDF**가 사용되었습니다.")
+                        st.latex(r"-(C_2H_2F_2)_n-")
+                        st.write("화학 구조 내 **불소(F)** 원소로 인해 합성 및 폐기 과정에서 GWP(지구온난화지수)가 매우 높습니다.")
+                    else:
+                        st.write(f"🟢 **Low Emission:** 바인더로 **{s_binder}**가 사용되었습니다. 이는 **천연 유래 고분자(Bio-based)**로, C, H, O 기반의 구조를 가지며 불소를 포함하지 않아 탄소 배출이 적습니다.")
 
-            with st.expander("3. Energy (에너지 소비) 산출 근거", expanded=True):
-                bp = 204.1 if s_solvent == "NMP" else 100
-                st.write(f"ℹ️ **Solvent Boiling Point:** {bp}°C")
-                st.write(f"현재 설정 온도: **{s_temp}°C**")
-                if s_solvent == "NMP":
-                    st.write("NMP는 끓는점이 204.1°C로 높아, 완전 건조를 위해 높은 열에너지가 지속적으로 필요합니다.")
-                else:
-                    st.write("물은 끓는점이 100°C로 낮아, 상대적으로 적은 에너지로도 건조가 가능합니다.")
+                with st.expander("3. Energy (에너지 소비) 산출 근거", expanded=True):
+                    bp = 204.1 if s_solvent == "NMP" else 100
+                    st.write(f"ℹ️ **Solvent Boiling Point:** {bp}°C")
+                    st.write(f"현재 설정 온도: **{s_temp}°C**")
+                    if s_solvent == "NMP":
+                        st.write("NMP는 끓는점이 204.1°C로 높아, 완전 건조를 위해 높은 열에너지가 지속적으로 필요합니다.")
+                    else:
+                        st.write("물은 끓는점이 100°C로 낮아, 상대적으로 적은 에너지로도 건조가 가능합니다.")
 
-            # 그래프 그리기
-            st.markdown("---")
-            st.markdown("#### 📊 Comparative Analysis (NMP vs Water Process)")
-            
-            # 비교군 데이터 생성 (NMP 기준)
-            ref_co2, ref_energy, ref_voc, _, _ = calculate_lca_impact("PVDF", "NMP", 130, s_loading, 60)
-            
-            labels = ['CO₂ (kg)', 'Energy (kWh)', 'VOC (g)']
-            current_vals = [co2, energy, voc]
-            ref_vals = [ref_co2, ref_energy, ref_voc]
+                # 그래프 그리기
+                st.markdown("---")
+                st.markdown("#### 📊 Comparative Analysis (NMP vs Water Process)")
+                
+                # 비교군 데이터 생성 (NMP 기준)
+                ref_co2, ref_energy, ref_voc, _, _ = calculate_lca_impact("PVDF", "NMP", 130, s_loading, 60)
+                
+                labels = ['CO₂ (kg)', 'Energy (kWh)', 'VOC (g)']
+                current_vals = [co2, energy, voc]
+                ref_vals = [ref_co2, ref_energy, ref_voc]
 
-            x = np.arange(len(labels))
-            width = 0.35
+                x = np.arange(len(labels))
+                width = 0.35
 
-            fig, ax = plt.subplots(figsize=(8, 5))
-            rects1 = ax.bar(x - width/2, ref_vals, width, label='Reference (PVDF/NMP)', color='#FF8A80', alpha=0.8)
-            rects2 = ax.bar(x + width/2, current_vals, width, label='Current Settings', color='#69F0AE', edgecolor='black')
+                fig, ax = plt.subplots(figsize=(8, 5))
+                rects1 = ax.bar(x - width/2, ref_vals, width, label='Reference (PVDF/NMP)', color='#FF8A80', alpha=0.8)
+                rects2 = ax.bar(x + width/2, current_vals, width, label='Current Settings', color='#69F0AE', edgecolor='black')
 
-            ax.set_ylabel('Impact Value')
-            ax.set_title('Environmental Impact Comparison')
-            ax.set_xticks(x); ax.set_xticklabels(labels, fontweight='bold')
-            ax.legend()
-            ax.grid(axis='y', linestyle=':', alpha=0.5)
-            
-            # 값 표시
-            def autolabel(rects):
-                for rect in rects:
-                    h = rect.get_height()
-                    ax.annotate(f'{h:.2f}', xy=(rect.get_x()+rect.get_width()/2, h), xytext=(0,3), textcoords="offset points", ha='center', fontsize=9)
-            autolabel(rects1); autolabel(rects2)
-            
-            st.pyplot(fig)
+                ax.set_ylabel('Impact Value')
+                ax.set_title('Environmental Impact Comparison')
+                ax.set_xticks(x); ax.set_xticklabels(labels, fontweight='bold')
+                ax.legend()
+                ax.grid(axis='y', linestyle=':', alpha=0.5)
+                
+                # 값 표시
+                def autolabel(rects):
+                    for rect in rects:
+                        h = rect.get_height()
+                        ax.annotate(f'{h:.2f}', xy=(rect.get_x()+rect.get_width()/2, h), xytext=(0,3), textcoords="offset points", ha='center', fontsize=9)
+                autolabel(rects1); autolabel(rects2)
+                
+                st.pyplot(fig)
 
         else:
             st.info("좌측 패널에서 공정 조건을 설정하고 [Engine 2 계산 실행]을 눌러주세요.")
